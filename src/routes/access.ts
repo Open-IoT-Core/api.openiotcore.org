@@ -5,6 +5,76 @@ import { broadcastToWeb } from '../websocket/server';
 const router = Router();
 
 /**
+ * POST /api/v1/access/announce-pairing
+ * Endpoint público llamado por la ESP32 al conectarse para anunciar su código de vinculación.
+ */
+router.post('/announce-pairing', async (req: Request, res: Response) => {
+  const { device_id, pairing_code, mac_address } = req.body;
+
+  if (!device_id || !pairing_code) {
+    res.status(400).json({ error: 'device_id y pairing_code son obligatorios' });
+    return;
+  }
+
+  try {
+    const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora de vigencia
+
+    await pool.query(
+      `INSERT INTO dispositivos_cerradura (id, ubicacion, mac_address, estado_conexion, ultimo_heartbeat, direccion_ip, codigo_vinculacion, codigo_expira_en)
+       VALUES ($1, 'Pendiente de vinculación', $3, 'ONLINE', CURRENT_TIMESTAMP, $4, $2, $5)
+       ON CONFLICT (id) DO UPDATE SET
+         codigo_vinculacion = CASE WHEN dispositivos_cerradura.propietario_id IS NULL THEN EXCLUDED.codigo_vinculacion ELSE dispositivos_cerradura.codigo_vinculacion END,
+         codigo_expira_en = CASE WHEN dispositivos_cerradura.propietario_id IS NULL THEN EXCLUDED.codigo_expira_en ELSE dispositivos_cerradura.codigo_expira_en END,
+         estado_conexion = 'ONLINE',
+         ultimo_heartbeat = CURRENT_TIMESTAMP,
+         direccion_ip = COALESCE($4, dispositivos_cerradura.direccion_ip)`,
+      [device_id, pairing_code, mac_address || null, req.ip, expiraEn]
+    );
+
+    res.json({
+      ok: true,
+      mensaje: 'Código de vinculación registrado (vigente por 1 hora)',
+      device_id,
+      pairing_code,
+      expira_en: expiraEn,
+    });
+  } catch (err) {
+    console.error('[ACCESS] Error registrando código de vinculación:', err);
+    res.status(500).json({ error: 'Error interno al registrar código de vinculación' });
+  }
+});
+
+/**
+ * GET /api/v1/access/check-pairing/:id
+ * Endpoint público llamado por la ESP32 para consultar si ya fue vinculada.
+ */
+router.get('/check-pairing/:id', async (req: Request, res: Response) => {
+  const deviceId = req.params.id as string;
+  try {
+    const result = await pool.query(
+      `SELECT propietario_id, codigo_expira_en FROM dispositivos_cerradura WHERE id = $1`,
+      [deviceId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Dispositivo no registrado' });
+      return;
+    }
+
+    const row = result.rows[0];
+    const estaVinculado = !!row.propietario_id;
+
+    res.json({
+      device_id: deviceId,
+      vinculado: estaVinculado,
+      propietario_id: row.propietario_id,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error consultando estado de vinculación' });
+  }
+});
+
+/**
  * POST /api/v1/access/validate
  * Body: { device_id: string, uid_hex: string }
  * Respuesta: { access_granted: boolean, reason: string }

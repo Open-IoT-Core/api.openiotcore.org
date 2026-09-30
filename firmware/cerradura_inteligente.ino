@@ -123,14 +123,15 @@ void mostrarMensaje(const String& linea1, const String& linea2 = "", const Strin
 // Genera un código de vinculación de 8 caracteres (ej: AEIO-4283)
 String generarCodigoVinculacion() {
   const char chars[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  randomSeed(micros() + ESP.getRandom());
+  uint32_t r = esp_random();
+  randomSeed(micros() + r);
   String code = "";
   for (int i = 0; i < 4; i++) {
-    code += chars[random(0, strlen(chars))];
+    code += chars[esp_random() % strlen(chars)];
   }
   code += "-";
   for (int i = 0; i < 4; i++) {
-    code += chars[random(0, strlen(chars))];
+    code += chars[esp_random() % strlen(chars)];
   }
   return code;
 }
@@ -462,7 +463,7 @@ void anunciarCodigoVinculacion() {
   if (apiPort != 80 && apiPort != 443) {
     url += ":" + String(apiPort);
   }
-  url += "/api/v1/devices/announce-pairing";
+  url += "/api/v1/access/announce-pairing";
 
   HTTPClient http;
   WiFiClientSecure secureClient;
@@ -508,7 +509,7 @@ void verificarEstadoVinculacion() {
   if (apiPort != 80 && apiPort != 443) {
     url += ":" + String(apiPort);
   }
-  url += "/api/v1/devices/check-pairing/" + deviceId;
+  url += "/api/v1/access/check-pairing/" + deviceId;
 
   HTTPClient http;
   WiFiClientSecure secureClient;

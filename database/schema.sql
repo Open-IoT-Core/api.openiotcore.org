@@ -26,17 +26,19 @@ CREATE TABLE credenciales (
   CONSTRAINT chk_fechas_credencial CHECK (expira_en > emitida_en)
 );
 
--- 3. TABLA: dispositivos_cerradura (con propietario para autoregistro/control web)
+-- 3. TABLA: dispositivos_cerradura (con propietario y código de vinculación de 8 dígitos)
 CREATE TABLE dispositivos_cerradura (
-  id VARCHAR(32) PRIMARY KEY, -- Ej: "ESP32-PUERTA-PRINCIPAL"
-  ubicacion VARCHAR(150) NOT NULL,
-  zona_piso VARCHAR(50) NOT NULL,
-  direccion_ip VARCHAR(45) NOT NULL,
-  mac_address VARCHAR(17) UNIQUE NOT NULL,
-  clave_secreta_hash VARCHAR(64) NOT NULL,
+  id VARCHAR(32) PRIMARY KEY, -- Ej: "ESP32-000000000000"
+  ubicacion VARCHAR(150) NOT NULL DEFAULT 'Sin asignar',
+  zona_piso VARCHAR(50) NOT NULL DEFAULT 'General',
+  direccion_ip VARCHAR(45) NOT NULL DEFAULT '0.0.0.0',
+  mac_address VARCHAR(17) UNIQUE,
+  clave_secreta_hash VARCHAR(64) NOT NULL DEFAULT 'default_hash',
   estado_conexion VARCHAR(20) NOT NULL DEFAULT 'OFFLINE' CHECK (estado_conexion IN ('ONLINE', 'OFFLINE', 'MANTENIMIENTO')),
   ultimo_heartbeat TIMESTAMPTZ,
-  propietario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL
+  propietario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  codigo_vinculacion VARCHAR(20),
+  codigo_expira_en TIMESTAMPTZ
 );
 
 -- 4. TABLA: permisos
@@ -88,3 +90,4 @@ CREATE INDEX idx_credenciales_uid ON credenciales USING btree (uid_hex);
 CREATE INDEX idx_permisos_lookup ON permisos USING btree (usuario_id, dispositivo_id, activo);
 CREATE INDEX idx_logs_timestamp ON logs_acceso USING btree (timestamp DESC);
 CREATE INDEX idx_dispositivos_propietario ON dispositivos_cerradura USING btree (propietario_id);
+CREATE INDEX idx_dispositivos_codigo ON dispositivos_cerradura USING btree (codigo_vinculacion);

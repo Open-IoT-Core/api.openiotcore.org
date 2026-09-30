@@ -21,11 +21,14 @@ router.post('/validate', async (req: Request, res: Response) => {
   try {
     await client.query('BEGIN');
 
-    // Heartbeat implícito
+    // Auto-registro / Heartbeat del dispositivo para garantizar integridad de FK en logs_acceso
     await client.query(
-      `UPDATE dispositivos_cerradura
-       SET estado_conexion = 'ONLINE', ultimo_heartbeat = CURRENT_TIMESTAMP, direccion_ip = COALESCE($2, direccion_ip)
-       WHERE id = $1`,
+      `INSERT INTO dispositivos_cerradura (id, ubicacion, estado_conexion, ultimo_heartbeat, direccion_ip)
+       VALUES ($1, 'Pendiente de vinculación', 'ONLINE', CURRENT_TIMESTAMP, COALESCE($2, '0.0.0.0'))
+       ON CONFLICT (id) DO UPDATE SET
+         estado_conexion = 'ONLINE',
+         ultimo_heartbeat = CURRENT_TIMESTAMP,
+         direccion_ip = COALESCE($2, dispositivos_cerradura.direccion_ip)`,
       [device_id, req.ip]
     );
 
@@ -136,7 +139,7 @@ router.post('/validate', async (req: Request, res: Response) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[ACCESS] Error en validación:', err);
-    res.status(500).json({ error: 'Error interno en validación' });
+    res.status(500).json({ error: 'Error interno al procesar validación' });
   } finally {
     client.release();
   }
@@ -144,9 +147,7 @@ router.post('/validate', async (req: Request, res: Response) => {
 
 /**
  * GET /api/v1/access/offline-sync
- * Query: ?device_id=ESP32-PUERTA-PRINCIPAL
- * Devuelve todas las credenciales activas y autorizadas para que el ESP32
- * las almacene localmente en caché para el Modo Offline.
+ * Query: ?device_id=ESP32-000000000000
  */
 router.get('/offline-sync', async (req: Request, res: Response) => {
   const deviceId = req.query.device_id as string;

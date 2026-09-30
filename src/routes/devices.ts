@@ -8,8 +8,6 @@ import { sendToDevice, broadcastToWeb, isDeviceConnected } from '../websocket/se
 
 const router = Router();
 
-router.use(requireAuth);
-
 const SQL_ESTADO_EFECTIVO = `
   CASE
     WHEN ultimo_heartbeat IS NOT NULL AND ultimo_heartbeat > NOW() - INTERVAL '2 minutes'
@@ -19,10 +17,179 @@ const SQL_ESTADO_EFECTIVO = `
 `;
 
 /**
- * GET /api/v1/devices/my-devices
- * Devuelve todas las cerraduras asociadas al usuario autenticado (ya sea propietario o con permiso).
+ * POST /api/v1/devices/announce-pairing
+ * Llamado por el ESP32 al encenderse o regenerar su código de 8 dígitos.
+ * Body: { device_id: string, pairing_code: string, mac_address?: string }
  */
-router.get('/my-devices', async (req: Request, res: Response) => {
+router.post('/announce-pairing', async (req: Request, res: Response) => {
+  const { device_id, pairing_code, mac_address } = req.body;
+
+  if (!device_id || !pairing_code) {
+    res.status(400).json({ error: 'device_id y pairing_code son obligatorios' });
+    return;
+  }
+
+  try {
+    const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora de vigencia
+
+    await pool.query(
+      `INSERT INTO dispositivos_cerradura (id, ubicacion, mac_address, estado_conexion, ultimo_heartbeat, direccion_ip, codigo_vinculacion, codigo_expira_en)
+       VALUES ($1, 'Pendiente de vinculación', $3, 'ONLINE', CURRENT_TIMESTAMP, $4, $2, $5)
+       ON CONFLICT (id) DO UPDATE SET
+         codigo_vinculacion = CASE WHEN dispositivos_cerradura.propietario_id IS NULL THEN EXCLUDED.codigo_vinculacion ELSE dispositivos_cerradura.codigo_vinculacion END,
+         codigo_expira_en = CASE WHEN dispositivos_cerradura.propietario_id IS NULL THEN EXCLUDED.codigo_expira_en ELSE dispositivos_cerradura.codigo_expira_en END,
+         estado_conexion = 'ONLINE',
+         ultimo_heartbeat = CURRENT_TIMESTAMP,
+         direccion_ip = COALESCE($4, dispositivos_cerradura.direccion_ip)`,
+      [device_id, pairing_code, mac_address || null, req.ip, expiraEn]
+    );
+
+    res.json({
+      ok: true,
+      mensaje: 'Código de vinculación registrado (vigente por 1 hora)',
+      device_id,
+      pairing_code,
+      expira_en: expiraEn,
+    });
+  } catch (err) {
+    console.error('[DEVICES] Error registrando código de vinculación:', err);
+    res.status(500).json({ error: 'Error interno al registrar código de vinculación' });
+  }
+});
+
+/**
+ * GET /api/v1/devices/check-pairing/:id
+ * Consultado por la ESP32 para verificar si un usuario ya ingresó el código en el Dashboard.
+ */
+router.get('/check-pairing/:id', async (req: Request, res: Response) => {
+  const deviceId = req.params.id as string;
+  try {
+    const result = await pool.query(
+      `SELECT propietario_id, codigo_expira_en FROM dispositivos_cerradura WHERE id = $1`,
+      [deviceId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Dispositivo no registrado' });
+      return;
+    }
+
+    const row = result.rows[0];
+    const estaVinculado = !!row.propietario_id;
+
+    res.json({
+      device_id: deviceId,
+      vinculado: estaVinculado,
+      propietario_id: row.propietario_id,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error consultando estado de vinculación' });
+  }
+});
+
+/**
+ * POST /api/v1/devices/claim-by-code
+ * Llamado por el Usuario en la Web/API para vincular una cerradura usando el código de 8 dígitos de la pantalla.
+ * Body: { pairing_code: string }
+ */
+router.post('/claim-by-code', requireAuth, async (req: Request, res: Response) => {
+  const { pairing_code } = req.body;
+  const userId = req.usuario?.id;
+
+  if (!pairing_code) {
+    res.status(400).json({ error: 'pairing_code es obligatorio' });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const devCheck = await client.query(
+      `SELECT id, propietario_id, codigo_expira_en FROM dispositivos_cerradura
+       WHERE UPPER(codigo_vinculacion) = UPPER($1)`,
+      [pairing_code.trim()]
+    );
+
+    if (devCheck.rows.length === 0) {
+      res.status(400).json({ error: 'El código de vinculación es inválido' });
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    const device = devCheck.rows[0];
+
+    if (device.propietario_id) {
+      res.status(409).json({ error: 'Esta cerradura ya se encuentra vinculada a otra cuenta' });
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    if (device.codigo_expira_en && new Date(device.codigo_expira_en) < new Date()) {
+      res.status(400).json({ error: 'El código de vinculación ha expirado. Genera uno nuevo en la cerradura.' });
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    // Asignar propietario y limpiar código de vinculación
+    const updateRes = await client.query(
+      `UPDATE dispositivos_cerradura SET
+         propietario_id = $1,
+         ubicacion = COALESCE(NULLIF(ubicacion, 'Pendiente de vinculación'), 'Mi Cerradura Inteligente'),
+         codigo_vinculacion = NULL,
+         codigo_expira_en = NULL
+       WHERE id = $2
+       RETURNING id, ubicacion, zona_piso, direccion_ip, mac_address, estado_conexion, propietario_id`,
+      [userId, device.id]
+    );
+
+    // Crear permiso automático 24/7 de 10 años para el propietario
+    const fechaLimite = new Date();
+    fechaLimite.setFullYear(fechaLimite.getFullYear() + 10);
+
+    await client.query(
+      `INSERT INTO permisos (usuario_id, dispositivo_id, hora_inicio, hora_fin, dias_semana, fecha_limite, activo)
+       VALUES ($1, $2, '00:00:00', '23:59:59', '{1,2,3,4,5,6,7}', $3, TRUE)
+       ON CONFLICT DO NOTHING`,
+      [userId, device.id, fechaLimite]
+    );
+
+    await client.query('COMMIT');
+
+    if (userId) {
+      await registrarAuditoria({
+        adminId: userId,
+        accion: 'VINCULAR_DISPOSITIVO_POR_CODIGO',
+        payload: { dispositivo_id: device.id, codigo: pairing_code },
+        ip: req.ip,
+      });
+    }
+
+    // Notificar al ESP32 y clientes Web vía WebSockets que la vinculación fue exitosa
+    sendToDevice(device.id, {
+      event: 'paired',
+      mensaje: '¡Dispositivo vinculado exitosamente!',
+      propietario_id: userId,
+    });
+
+    broadcastToWeb('device_registered', { deviceId: device.id, propietario_id: userId });
+
+    res.json({
+      ok: true,
+      mensaje: '¡Cerradura vinculada exitosamente a tu cuenta!',
+      dispositivo: updateRes.rows[0],
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[DEVICES] Error en claim-by-code:', err);
+    res.status(500).json({ error: 'Error al procesar la vinculación' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/v1/devices/my-devices (Requiere Autenticación)
+router.get('/my-devices', requireAuth, async (req: Request, res: Response) => {
   const userId = req.usuario?.id;
   try {
     const result = await pool.query(
@@ -50,10 +217,8 @@ router.get('/my-devices', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/devices/register
- * Permite a cualquier usuario registrado añadir/vincular manualmente una cerradura a su cuenta.
- * Body: { id, ubicacion, zona_piso, direccion_ip, mac_address, clave_secreta? }
  */
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', requireAuth, async (req: Request, res: Response) => {
   const { id, ubicacion, zona_piso, direccion_ip, mac_address, clave_secreta } = req.body;
   const userId = req.usuario?.id;
 
@@ -77,7 +242,6 @@ router.post('/register', async (req: Request, res: Response) => {
       [id, ubicacion, zona_piso, direccion_ip, mac_address, claveHash, userId]
     );
 
-    // Crear permiso automático 24/7 para el propietario
     const fechaLimite = new Date();
     fechaLimite.setFullYear(fechaLimite.getFullYear() + 10);
 
@@ -121,9 +285,8 @@ router.post('/register', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/devices/:id/verify
- * Verifica el estado en tiempo real de una cerradura.
  */
-router.post('/:id/verify', async (req: Request, res: Response) => {
+router.post('/:id/verify', requireAuth, async (req: Request, res: Response) => {
   const deviceId = req.params.id as string;
   try {
     const result = await pool.query(
@@ -156,14 +319,12 @@ router.post('/:id/verify', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/devices/:id/unlock
- * Control remoto desde la web: Envía orden de apertura instantánea vía WebSocket a la cerradura.
  */
-router.post('/:id/unlock', async (req: Request, res: Response) => {
+router.post('/:id/unlock', requireAuth, async (req: Request, res: Response) => {
   const deviceId = req.params.id as string;
   const userId = req.usuario?.id;
 
   try {
-    // Verificar permisos del usuario sobre el dispositivo
     const permCheck = await pool.query(
       `SELECT d.id FROM dispositivos_cerradura d
        LEFT JOIN permisos p ON p.dispositivo_id = d.id AND p.usuario_id = $1 AND p.activo = TRUE
@@ -182,7 +343,6 @@ router.post('/:id/unlock', async (req: Request, res: Response) => {
       timestamp: new Date(),
     });
 
-    // Registrar apertura remota en auditoría y logs
     await pool.query(
       `INSERT INTO logs_acceso (dispositivo_id, uid_leido, usuario_id, evento, razon)
        VALUES ($1, 'WEB_REMOTE', $2, 'PERMITIDO', 'Desbloqueo remoto desde aplicación web')`,
@@ -203,7 +363,7 @@ router.post('/:id/unlock', async (req: Request, res: Response) => {
 });
 
 // GET /api/v1/devices (General / Admin)
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', requireAuth, async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT id, ubicacion, zona_piso, direccion_ip, mac_address,
@@ -218,7 +378,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // GET /api/v1/devices/:id
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT id, ubicacion, zona_piso, direccion_ip, mac_address,
@@ -237,7 +397,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // POST /api/v1/devices (Admin)
-router.post('/', requireRole('ADMIN'), async (req: Request, res: Response) => {
+router.post('/', requireAuth, requireRole('ADMIN'), async (req: Request, res: Response) => {
   const { id, ubicacion, zona_piso, direccion_ip, mac_address } = req.body;
 
   if (!id || !ubicacion || !zona_piso || !direccion_ip || !mac_address) {
@@ -281,7 +441,7 @@ router.post('/', requireRole('ADMIN'), async (req: Request, res: Response) => {
 });
 
 // PUT /api/v1/devices/:id
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', requireAuth, async (req: Request, res: Response) => {
   const { ubicacion, zona_piso, direccion_ip, estado_conexion } = req.body;
   const userId = req.usuario?.id;
 
@@ -324,7 +484,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 // POST /api/v1/devices/:id/rotate-key
-router.post('/:id/rotate-key', async (req: Request, res: Response) => {
+router.post('/:id/rotate-key', requireAuth, async (req: Request, res: Response) => {
   const userId = req.usuario?.id;
   try {
     const devCheck = await pool.query(`SELECT propietario_id FROM dispositivos_cerradura WHERE id = $1`, [req.params.id]);
@@ -359,7 +519,7 @@ router.post('/:id/rotate-key', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/v1/devices/:id
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
   const userId = req.usuario?.id;
   try {
     const devCheck = await pool.query(`SELECT propietario_id FROM dispositivos_cerradura WHERE id = $1`, [req.params.id]);

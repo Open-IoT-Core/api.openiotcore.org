@@ -9,6 +9,7 @@ export const authLimiter = rateLimit({
   max: 15, // Máximo 15 peticiones por ventana IP
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     error: 'Demasiadas tentativas de autenticación desde esta IP. Por favor intente más tarde (15 min).'
   }
@@ -22,6 +23,7 @@ export const apiLimiter = rateLimit({
   max: 300, // Máximo 300 peticiones por ventana IP
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     error: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde.'
   }

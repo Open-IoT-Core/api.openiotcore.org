@@ -1,0 +1,40 @@
+{
+  "name": "openiotcore-backend",
+  "version": "1.0.0",
+  "description": "API de validación de acceso - OpenIoTCore",
+  "main": "src/app.ts",
+  "scripts": {
+    "start": "bun run src/app.ts",
+    "dev": "bun --watch src/app.ts",
+    "build": "tsc",
+    "create-admin": "bun run scripts/create-admin.ts",
+    "test": "echo \"(pendiente) agregar suite de pruebas con Jest\" && exit 0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "passport-local": "^1.0.0",
+    "pg": "^8.12.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.6.3",
+    "@types/passport": "^1.0.17",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/passport-local": "^1.0.38",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2"
+  }
+}

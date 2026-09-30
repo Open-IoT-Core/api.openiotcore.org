@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/db';
 import { requireAuth } from '../middleware/auth';
 import { registrarAuditoria } from '../utils/audit';
+import { broadcastToWeb } from '../websocket/server';
 
 const router = Router();
 
@@ -61,6 +62,7 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'CREAR_PERMISO', permiso_id: result.rows[0].id });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('[PERMISSIONS] Error al crear:', err);
@@ -97,6 +99,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'EDITAR_PERMISO', permiso_id: req.params.id });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Error al editar el permiso' });
@@ -124,6 +127,7 @@ router.patch('/:id/pause', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'PAUSAR_PERMISO', permiso_id: req.params.id });
     res.json({ ok: true, mensaje: 'Permiso pausado' });
   } catch (err) {
     res.status(500).json({ error: 'Error al pausar el permiso' });
@@ -148,6 +152,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'ELIMINAR_PERMISO', permiso_id: req.params.id });
     res.json({ ok: true, mensaje: 'Permiso eliminado' });
   } catch (err) {
     res.status(500).json({ error: 'Error al eliminar el permiso' });

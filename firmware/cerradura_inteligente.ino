@@ -876,7 +876,7 @@ String leerUID() {
 
 void procesarTarjeta() {
   String uid = leerUID();
-  Serial.println("[RFID] UID escaneado.");
+  Serial.println("[RFID] UID escaneado: " + uid);
 
   // Notificación instantánea vía WebSocket para enrolamiento/dashboard en vivo
   if (webSocket.isConnected()) {
@@ -885,34 +885,31 @@ void procesarTarjeta() {
   }
 
   String nombreUsuario = "";
-  bool cachedPermission = consultarCacheLocal(uid, nombreUsuario);
-  bool accessGranted = cachedPermission;
+  bool accessGranted = false;
   bool onlineValidated = false;
 
-  if (cachedPermission) {
-    Serial.println("[ACCESO] Permitido por caché NVS.");
+  // Si estamos conectados a WiFi, consultar siempre la API REST en tiempo real
+  if (WiFi.status() == WL_CONNECTED) {
+    onlineValidated = validarConAPI(uid, accessGranted, nombreUsuario);
+  }
+
+  // Si estamos en modo Offline (o la API no respondió), usar la caché local NVS
+  if (!onlineValidated) {
+    accessGranted = consultarCacheLocal(uid, nombreUsuario);
+    Serial.println("[MODO] Offline - Usando caché local NVS");
+  }
+
+  if (accessGranted) {
+    Serial.println("[ACCESO] Permitido. Abriendo cerradura...");
     mostrarPantallaBienvenido(nombreUsuario);
     abrirCerradura();
-    
-    // Validar en segundo plano contra la API para sincronizar estado actualizado
-    String tempNombre = "";
-    onlineValidated = validarConAPI(uid, accessGranted, tempNombre);
   } else {
-    // Si no está en caché local, consultar API REST
-    onlineValidated = validarConAPI(uid, accessGranted, nombreUsuario);
-    
-    if (accessGranted) {
-      Serial.println("[ACCESO] Permitido por API. Abriendo cerradura...");
-      mostrarPantallaBienvenido(nombreUsuario);
-      abrirCerradura();
-    } else {
-      Serial.println("[ACCESO] Denegado.");
-      digitalWrite(LED_RED_PIN, HIGH);
-      tone(BUZZER_PIN, 500, 300);
-      mostrarPantallaDenegado();
-      delay(300);
-      digitalWrite(LED_RED_PIN, LOW);
-    }
+    Serial.println("[ACCESO] Denegado.");
+    digitalWrite(LED_RED_PIN, HIGH);
+    tone(BUZZER_PIN, 500, 300);
+    mostrarPantallaDenegado();
+    delay(300);
+    digitalWrite(LED_RED_PIN, LOW);
   }
 
   rfid.PICC_HaltA();

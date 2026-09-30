@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/db';
 import { requireAuth } from '../middleware/auth';
 import { registrarAuditoria } from '../utils/audit';
+import { broadcastToWeb } from '../websocket/server';
 
 const router = Router();
 
@@ -59,6 +60,7 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'VINCULAR_CREDENCIAL', uid_hex: uid_hex.toUpperCase() });
     res.status(201).json(result.rows[0]);
   } catch (err: any) {
     if (err.code === '23505') {
@@ -91,6 +93,7 @@ router.patch('/:id/revoke', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'REVOCAR_CREDENCIAL', credencial_id: req.params.id });
     res.json({ ok: true, mensaje: 'Credencial revocada' });
   } catch (err) {
     res.status(500).json({ error: 'Error al revocar credencial' });
@@ -118,6 +121,7 @@ router.patch('/:id/reactivate', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'REACTIVAR_CREDENCIAL', credencial_id: req.params.id });
     res.json({ ok: true, mensaje: 'Credencial reactivada' });
   } catch (err) {
     res.status(500).json({ error: 'Error al reactivar credencial' });
@@ -142,6 +146,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       });
     }
 
+    broadcastToWeb('sync_credentials', { accion: 'ELIMINAR_CREDENCIAL' });
     res.json({ ok: true, mensaje: 'Credencial eliminada' });
   } catch (err) {
     res.status(500).json({ error: 'Error al eliminar credencial' });

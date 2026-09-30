@@ -183,7 +183,12 @@ router.post('/validate', async (req: Request, res: Response) => {
         timestamp: new Date(),
       });
 
-      res.status(200).json({ access_granted: true, reason: 'Acceso autorizado' });
+      res.status(200).json({ 
+        access_granted: true, 
+        reason: 'Acceso autorizado',
+        nombre,
+        apellido
+      });
       return;
     }
 

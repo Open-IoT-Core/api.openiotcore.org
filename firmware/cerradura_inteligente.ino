@@ -101,20 +101,111 @@ String pairingCode = "";
 // ============================================================
 // UTILIDADES DE PANTALLA OLED
 // ============================================================
+// ============================================================
+// UTILIDADES DE PANTALLA OLED USER-FRIENDLY
+// ============================================================
+void mostrarPantallaIdle() {
+  display.clearDisplay();
+  display.setTextColor(SSD1327_WHITE);
+  display.setTextSize(1);
+  display.setCursor(14, 2);
+  display.println("OpenIoTCore");
+  display.drawFastHLine(0, 14, 128, SSD1327_WHITE);
+
+  if (!dispositivoVinculado) {
+    display.setCursor(0, 22);
+    display.println("Red: " + (wifiSsid != "" ? wifiSsid : "Sin Red"));
+    display.setCursor(0, 40);
+    display.println("Cod. Vinculacion:");
+    
+    display.setTextSize(2);
+    display.setCursor(6, 60);
+    display.println(pairingCode != "" ? pairingCode : "-------");
+    
+    display.setTextSize(1);
+    display.setCursor(0, 96);
+    display.println("Vigente: 1 hora");
+  } else {
+    display.setCursor(0, 22);
+    display.println("Red WiFi:");
+    display.setCursor(0, 36);
+    display.println(wifiSsid != "" ? wifiSsid : "Conectado");
+    
+    display.drawFastHLine(0, 52, 128, SSD1327_WHITE);
+    
+    display.setCursor(0, 68);
+    display.println("Acerca tu tarjeta");
+    display.setCursor(0, 84);
+    display.println("RFID para ingresar");
+  }
+
+  display.display();
+}
+
+void mostrarPantallaBienvenido(const String& nombre) {
+  display.clearDisplay();
+  display.setTextColor(SSD1327_WHITE);
+  display.setTextSize(1);
+  display.setCursor(14, 2);
+  display.println("OpenIoTCore");
+  display.drawFastHLine(0, 14, 128, SSD1327_WHITE);
+
+  display.setCursor(12, 24);
+  display.println("!Bienvenido!");
+
+  String nameShow = (nombre != "") ? nombre : "Usuario";
+  display.setTextSize(2);
+  display.setCursor(0, 46);
+  if (nameShow.length() > 8) {
+    display.setTextSize(1);
+    display.setCursor(0, 52);
+  }
+  display.println(nameShow);
+
+  display.drawFastHLine(0, 76, 128, SSD1327_WHITE);
+  display.setTextSize(1);
+  display.setCursor(8, 92);
+  display.println("Acceso Concedido");
+
+  display.display();
+}
+
+void mostrarPantallaDenegado() {
+  display.clearDisplay();
+  display.setTextColor(SSD1327_WHITE);
+  display.setTextSize(1);
+  display.setCursor(14, 2);
+  display.println("OpenIoTCore");
+  display.drawFastHLine(0, 14, 128, SSD1327_WHITE);
+
+  display.setCursor(10, 32);
+  display.println("ACCESO DENEGADO");
+
+  display.drawFastHLine(0, 52, 128, SSD1327_WHITE);
+
+  display.setCursor(0, 68);
+  display.println("Tarjeta no");
+  display.setCursor(0, 84);
+  display.println("autorizada");
+
+  display.display();
+}
+
 void mostrarMensaje(const String& linea1, const String& linea2 = "", const String& linea3 = "") {
   display.clearDisplay();
   display.setTextColor(SSD1327_WHITE);
   display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("== OpenIoTCore ==");
-  display.setCursor(0, 20);
+  display.setCursor(14, 2);
+  display.println("OpenIoTCore");
+  display.drawFastHLine(0, 14, 128, SSD1327_WHITE);
+  display.setCursor(0, 24);
   display.println(linea1);
   if (linea2 != "") {
-    display.setCursor(0, 45);
+    display.setCursor(0, 48);
     display.println(linea2);
   }
   if (linea3 != "") {
-    display.setCursor(0, 70);
+    display.setCursor(0, 72);
     display.println(linea3);
   }
   display.display();
@@ -528,11 +619,7 @@ void verificarEstadoVinculacion() {
       StaticJsonDocument<200> doc;
       if (!deserializeJson(doc, http.getString())) {
         dispositivoVinculado = doc["vinculado"] | false;
-        if (!dispositivoVinculado) {
-          mostrarMensaje("Cod. Vinculacion:", pairingCode, "Vigente: 1 hora");
-        } else {
-          mostrarMensaje("Listo.", "Acerca tu tarjeta");
-        }
+        mostrarPantallaIdle();
       }
     }
     http.end();
@@ -567,15 +654,17 @@ void initWebSockets() {
         if (!deserializeJson(doc, payload)) {
           const char* eventName = doc["event"];
           const char* command   = doc["command"];
+          const char* action    = doc["action"];
 
           if (eventName && strcmp(eventName, "paired") == 0) {
             Serial.println("[WS-EVENT] ¡Dispositivo vinculado con éxito por el usuario!");
             dispositivoVinculado = true;
-            mostrarMensaje("¡Vinculado!", "Cerradura lista", "Acerca tu tarjeta");
-            delay(2000);
-          } else if (command && strcmp(command, "UNLOCK") == 0) {
+            mostrarPantallaIdle();
+          } else if ((command && (strcasecmp(command, "UNLOCK") == 0)) ||
+                     (action  && (strcasecmp(action,  "UNLOCK") == 0)) ||
+                     (eventName && (strcasecmp(eventName, "UNLOCK") == 0))) {
             Serial.println("[WS-CMD] ¡Orden de apertura remota recibida!");
-            mostrarMensaje("Desbloqueo Web", "Acceso concedido", "WebSocket");
+            mostrarPantallaBienvenido("Acceso Web");
             abrirCerradura();
           }
         }
@@ -585,7 +674,7 @@ void initWebSockets() {
         break;
     }
   });
-  webSocket.setReconnectInterval(5000);
+  webSocket.setReconnectInterval(1000);
 }
 
 // ============================================================
@@ -618,12 +707,19 @@ bool conectarWifi() {
 // ============================================================
 // CACHÉ OFFLINE Y SINCRONIZACIÓN
 // ============================================================
-bool consultarCacheLocal(const String& uid) {
-  return cachePrefs.getBool(uid.c_str(), false);
+bool consultarCacheLocal(const String& uid, String& nombreUsuario) {
+  bool permitido = cachePrefs.getBool(uid.c_str(), false);
+  String keyName = "n_" + uid;
+  nombreUsuario = cachePrefs.getString(keyName.c_str(), "Usuario");
+  return permitido;
 }
 
-void actualizarCacheLocal(const String& uid, bool permitido) {
+void actualizarCacheLocal(const String& uid, bool permitido, const String& nombreUsuario = "") {
   cachePrefs.putBool(uid.c_str(), permitido);
+  if (nombreUsuario != "") {
+    String keyName = "n_" + uid;
+    cachePrefs.putString(keyName.c_str(), nombreUsuario);
+  }
 }
 
 void syncOfflineCredentials() {
@@ -660,8 +756,9 @@ void syncOfflineCredentials() {
         JsonArray creds = doc["credenciales_autorizadas"];
         for (JsonObject c : creds) {
           const char* uid = c["uid_hex"];
+          const char* nom = c["nombre"];
           if (uid) {
-            actualizarCacheLocal(String(uid), true);
+            actualizarCacheLocal(String(uid), true, nom ? String(nom) : "Usuario");
           }
         }
         Serial.println("[SYNC] Credenciales offline sincronizadas correctamente.");
@@ -674,7 +771,7 @@ void syncOfflineCredentials() {
 // ============================================================
 // VALIDACIÓN EN LÍNEA CONTRA LA API (REST HTTP / HTTPS)
 // ============================================================
-bool validarConAPI(const String& uid, bool& accessGranted) {
+bool validarConAPI(const String& uid, bool& accessGranted, String& nombreUsuario) {
   if (WiFi.status() != WL_CONNECTED) return false;
 
   String cleanHost = apiHost;
@@ -718,7 +815,7 @@ bool validarConAPI(const String& uid, bool& accessGranted) {
 
   if (codigo == 200) {
     String respuesta = http.getString();
-    StaticJsonDocument<256> resDoc;
+    StaticJsonDocument<384> resDoc;
     DeserializationError err = deserializeJson(resDoc, respuesta);
     http.end();
 
@@ -728,7 +825,10 @@ bool validarConAPI(const String& uid, bool& accessGranted) {
     }
 
     accessGranted = resDoc["access_granted"] | false;
-    actualizarCacheLocal(uid, accessGranted);
+    const char* nom = resDoc["nombre"] | "";
+    nombreUsuario = String(nom);
+
+    actualizarCacheLocal(uid, accessGranted, nombreUsuario);
     return true;
   }
 
@@ -757,11 +857,7 @@ void cerrarCerradura() {
 void revisarTemporizadorServo() {
   if (servoActivo && (millis() - tiempoActivacion >= DURACION_APERTURA_MS)) {
     cerrarCerradura();
-    if (!dispositivoVinculado) {
-      mostrarMensaje("Cod. Vinculacion:", pairingCode, "Vigente: 1 hora");
-    } else {
-      mostrarMensaje("Acerca tu tarjeta", modoAP ? "" : WiFi.SSID());
-    }
+    mostrarPantallaIdle();
   }
 }
 
@@ -780,27 +876,43 @@ String leerUID() {
 
 void procesarTarjeta() {
   String uid = leerUID();
-  Serial.println("[RFID] UID leído: " + uid);
+  Serial.println("[RFID] UID escaneado.");
 
-  bool accessGranted = false;
-  bool online = validarConAPI(uid, accessGranted);
-
-  if (!online) {
-    accessGranted = consultarCacheLocal(uid);
-    Serial.println("[MODO] Offline - usando caché local NVS");
+  // Notificación instantánea vía WebSocket para enrolamiento/dashboard en vivo
+  if (webSocket.isConnected()) {
+    String scanMsg = "{\"event\":\"card_scanned\",\"data\":{\"deviceId\":\"" + deviceId + "\",\"uid_hex\":\"" + uid + "\"}}";
+    webSocket.sendTXT(scanMsg);
   }
 
-  if (accessGranted) {
-    Serial.println("[ACCESO] Permitido. Abriendo cerradura...");
-    mostrarMensaje("Acceso concedido", uid, online ? "En linea" : "Modo offline");
+  String nombreUsuario = "";
+  bool cachedPermission = consultarCacheLocal(uid, nombreUsuario);
+  bool accessGranted = cachedPermission;
+  bool onlineValidated = false;
+
+  if (cachedPermission) {
+    Serial.println("[ACCESO] Permitido por caché NVS.");
+    mostrarPantallaBienvenido(nombreUsuario);
     abrirCerradura();
+    
+    // Validar en segundo plano contra la API para sincronizar estado actualizado
+    String tempNombre = "";
+    onlineValidated = validarConAPI(uid, accessGranted, tempNombre);
   } else {
-    Serial.println("[ACCESO] Denegado.");
-    digitalWrite(LED_RED_PIN, HIGH);
-    tone(BUZZER_PIN, 500, 300);
-    mostrarMensaje("Acceso denegado", uid, online ? "En linea" : "Modo offline");
-    delay(400);
-    digitalWrite(LED_RED_PIN, LOW);
+    // Si no está en caché local, consultar API REST
+    onlineValidated = validarConAPI(uid, accessGranted, nombreUsuario);
+    
+    if (accessGranted) {
+      Serial.println("[ACCESO] Permitido por API. Abriendo cerradura...");
+      mostrarPantallaBienvenido(nombreUsuario);
+      abrirCerradura();
+    } else {
+      Serial.println("[ACCESO] Denegado.");
+      digitalWrite(LED_RED_PIN, HIGH);
+      tone(BUZZER_PIN, 500, 300);
+      mostrarPantallaDenegado();
+      delay(300);
+      digitalWrite(LED_RED_PIN, LOW);
+    }
   }
 
   rfid.PICC_HaltA();
@@ -902,10 +1014,10 @@ void loop() {
   }
 
   if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
-    delay(50);
+    delay(10);
     return;
   }
 
   procesarTarjeta();
-  delay(800);
+  delay(300);
 }

@@ -47,9 +47,9 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `INSERT INTO permisos (usuario_id, dispositivo_id, hora_inicio, hora_fin, dias_semana, fecha_limite)
-       VALUES ($1, $2, COALESCE($3, '00:00:00'), COALESCE($4, '23:59:59'), COALESCE($5, '{1,2,3,4,5,6,7}'), $6)
+       VALUES ($1, $2, COALESCE($3::time, '00:00:00'::time), COALESCE($4::time, '23:59:59'::time), COALESCE($5::int[], '{1,2,3,4,5,6,7}'::int[]), $6::timestamp)
        RETURNING *`,
-      [usuario_id, dispositivo_id, hora_inicio, hora_fin, dias_semana, fecha_limite]
+      [usuario_id, dispositivo_id, hora_inicio || null, hora_fin || null, dias_semana || null, fecha_limite]
     );
 
     if (req.usuario) {
@@ -74,14 +74,14 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `UPDATE permisos SET
-         hora_inicio = COALESCE($1, hora_inicio),
-         hora_fin = COALESCE($2, hora_fin),
-         dias_semana = COALESCE($3, dias_semana),
-         fecha_limite = COALESCE($4, fecha_limite),
-         activo = COALESCE($5, activo)
+         hora_inicio = COALESCE($1::time, hora_inicio),
+         hora_fin = COALESCE($2::time, hora_fin),
+         dias_semana = COALESCE($3::int[], dias_semana),
+         fecha_limite = COALESCE($4::timestamp, fecha_limite),
+         activo = COALESCE($5::boolean, activo)
        WHERE id = $6
        RETURNING *`,
-      [hora_inicio, hora_fin, dias_semana, fecha_limite, activo, req.params.id]
+      [hora_inicio || null, hora_fin || null, dias_semana || null, fecha_limite || null, activo ?? null, req.params.id]
     );
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'Permiso no encontrado' });

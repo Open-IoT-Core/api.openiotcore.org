@@ -57,6 +57,7 @@ app.use('/api/v1/credentials', credentialsRoutes);
 app.use('/api/v1/devices', devicesRoutes);
 app.use('/api/v1/permissions', permissionsRoutes);
 app.use('/api/v1/logs', logsRoutes);
+app.use('/api/v1/access/logs', logsRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 
 app.use((req: Request, res: Response) => {

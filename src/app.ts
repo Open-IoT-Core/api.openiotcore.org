@@ -22,6 +22,10 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
 
+// Habilitar trust proxy para reverse proxies (Docker, Nginx, Cloudflare, Pterodactyl)
+// Necesario para que express-rate-limit pueda identificar las IP reales tras la cabecera X-Forwarded-For
+app.set('trust proxy', 1);
+
 if (!process.env.JWT_SECRET) {
   console.warn('[SERVER] ADVERTENCIA: JWT_SECRET no está definido en el entorno.');
 }
